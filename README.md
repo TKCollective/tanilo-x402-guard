@@ -74,7 +74,7 @@ reaches the guard.
   and never appears in a receipt.
 
 Each result names what it compared, for example "the offered price matches the supplied term under
-contract-price-match/v0.1". Results computed in local mode are labelled unsigned.
+contract-price-match/v0.1". Results computed in local mode are labeled unsigned.
 
 The offer time is the time the hook runs, from the system clock, or from your `now()` option if you give one.
 The rules read no clock, so the guard supplies it. The time used, and where it came from, are in
@@ -132,7 +132,7 @@ not_evaluated for the contract price.
   mode uses the API's result after cross-checking it against the local rule (a different result is treated as
   unavailable), and the receipt can be verified offline later.
 
-A signed receipt contains the inputs sent for the checks it covers: the offer, plus your terms, your cap and the amount already spent where those checks ran. Anyone you share a receipt with can read them.
+A signed receipt contains the inputs sent for the checks it covers: the offer, plus your terms, your cap and the amount already spent where those checks ran. Anyone you share a receipt with can read them. What the Tanilo API keeps is described in Tanilo's [privacy notice](https://tanilo.io/privacy).
 
 The API requires `subject.claim_hash`. The guard sets it to `sha256-` followed by the SHA-256 hex digest of the
 RFC 8785 canonical JSON of the one check's `input` object when it sends one check (the same value tanilo-mcp

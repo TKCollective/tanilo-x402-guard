@@ -34,8 +34,14 @@
     "guard",
     "tanilo"
   ],
-  "homepage": "https://tanilo.io/docs/contract-price-check",
+  "homepage": "https://github.com/TKCollective/tanilo-x402-guard#readme",
   "license": "Apache-2.0",
-  "author": "TK Collective LLC <joe@tanilo.io>",
-  "private": true
+  "author": "Tanilo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TKCollective/tanilo-x402-guard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TKCollective/tanilo-x402-guard/issues"
+  }
 }
