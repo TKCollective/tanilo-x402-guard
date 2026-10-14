@@ -21,11 +21,20 @@ const sha256 = (buf) => `sha256-${crypto.createHash("sha256").update(buf).digest
  *                        malformed or unsigned response, a check missing, a bad signature when jwks was given)
  * Never throws.
  */
+/**
+ * subject.claim_hash, which the API requires (HTTP 400 missing_subject_claim_hash without it).
+ * One check: "sha256-" + SHA-256 hex of the RFC 8785 canonical JSON of that check's input object, the same value
+ * tanilo-mcp and the hosted MCP endpoint compute. Two checks: the same over the whole checks array as sent,
+ * [{ check_type, input }, ...]. No claim text is sent.
+ */
+export function claimHashFor(checks) {
+  const target = checks.length === 1 ? checks[0].input : checks;
+  return sha256(Buffer.from(jcs(target), "utf8"));
+}
+
 export async function callService({ baseUrl, timeoutMs, fetchImpl, jwks, agentId, checks }) {
   const body = {
-    // The API requires subject.claim_hash so the receipt binds to something specific: here, the hash of the
-    // checks themselves (JCS, RFC 8785). No claim text is sent.
-    subject: { claim_hash: sha256(Buffer.from(jcs(checks), "utf8")) },
+    subject: { claim_hash: claimHashFor(checks) },
     ...(agentId ? { agent_id: agentId } : {}),
     checks,
   };

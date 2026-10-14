@@ -112,6 +112,10 @@ not_evaluated for the contract price.
 A signed receipt contains the offer, your supplied terms and your cap. Anyone you share a receipt with can read
 them.
 
+The API requires `subject.claim_hash`. The guard sets it to `sha256-` followed by the SHA-256 hex digest of the
+RFC 8785 canonical JSON of the one check's `input` object when it sends one check (the same value tanilo-mcp
+computes), and of the whole `checks` array when it sends two.
+
 The hook can only allow or stop a payment, so receipts come out through `onDecision(decision)`:
 `decision.receipt` holds `jws`, `canonical_sha256` and `kid`.
 
