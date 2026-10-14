@@ -3,19 +3,38 @@
 A before-payment guard for x402 clients. Before your agent pays, it checks the payment against your own
 terms and your own budget, and stops the payment if they disagree.
 
+```bash
+npm install tanilo-x402-guard @x402/core @x402/fetch
+```
+
+You also need the x402 payment scheme package for your network, for example `@x402/evm`.
+
+Status: 0.1.0, early release. The rules are contract-price-match/v0.1 and spend-cap/v0.1.
+
 It plugs into x402's `onBeforePaymentCreation` hook. Supports x402 v2 only. The peer dependency range is
 `@x402/core >=2.19.0 <3`; the versions actually tested are 2.19.0 and 2.28.0, and the versions in between
 are not tested. The checks are Tanilo's published rules,
 [contract price](https://tanilo.io/docs/contract-price-check) and
-[spend cap](https://tanilo.io/docs/spend-cap-check), run unchanged.
+[spend cap](https://tanilo.io/docs/spend-cap-check), run unchanged. The rules and their CC0 test vectors are
+published in [tanilo-receipt-spec](https://github.com/TKCollective/tanilo-receipt-spec):
+[`checks/contract-price-match/`](https://github.com/TKCollective/tanilo-receipt-spec/tree/4d8ca9f498a3ff00f650db83b13dbb8f2b2448f7/checks/contract-price-match)
+(`contract-price.js`, `contract-price.vectors.json`) and
+[`checks/spend-cap/`](https://github.com/TKCollective/tanilo-receipt-spec/tree/4d8ca9f498a3ff00f650db83b13dbb8f2b2448f7/checks/spend-cap)
+(`spend-cap.js`, `spend-cap.vectors.json`), at the commit this package copies (`4d8ca9f`). More at
+[tanilo.io](https://tanilo.io).
 
 ```js
-import { x402Client, wrapFetchWithPayment } from "@x402/fetch";
+import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
 import { taniloGuard } from "tanilo-x402-guard";
 
-const client = new x402Client();            // register your payment scheme as usual
+const NET = "eip155:8453";
+const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+const client = new x402Client();
+client.register(NET, yourScheme);                             // your x402 payment scheme client
 client.onBeforePaymentCreation(taniloGuard({
-  assets: { "eip155:8453": { "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913": { currency: "USD", decimals: 6 } } },
+  mode: "local",
+  assets: { [NET]: { [USDC]: { currency: "USD", decimals: 6 } } },   // your choice: this maps USDC on Base to USD
   terms: [{
     resource: "https://seller.example/weather",
     seller: "seller.example", sku: "api.weather.v1", unit: "call",
@@ -29,10 +48,14 @@ client.onBeforePaymentCreation(taniloGuard({
 const fetchWithPay = wrapFetchWithPayment(fetch, client);
 ```
 
+`x402Client` is defined in `@x402/core` (`@x402/core/client`); `@x402/fetch` re-exports the same class, so the
+import above and the one in `examples/fetch-local.mjs` are the same. The example runs with a mock seller and a
+mock scheme: `cd examples && npm install && node fetch-local.mjs`.
+
 A stopped payment makes the x402 client throw `Payment creation aborted: <reason>`. Through `@x402/fetch` the
 message starts `Failed to create payment payload:`.
 
-The guard sees the one payment option the client has already chosen. From 2.28, the x402 client applies its own
+The guard sees the one payment option the client has already chosen. In 2.28.0 (not in 2.19.0; versions in between not checked), the x402 client applies its own
 spend controls first (by default a $1 cap per payment on the assets it recognizes); a payment they reject never
 reaches the guard.
 
@@ -73,13 +96,15 @@ point) are indeterminate, never rounded.
 
 ## Results and default policies
 
-| Result | Meaning | Default |
+| Check state | Meaning | Default |
 | --- | --- | --- |
 | verified | the check ran and the payment agrees with your terms or cap | allow |
-| contradicted | the check ran and the payment disagrees | always stop (`payee_match`: `onPayeeMismatch: "block"`) |
+| contradicted | the check ran and the payment disagrees | always stops, except `payee_match`, which follows `onPayeeMismatch` (default block) |
 | indeterminate | the check could not compare (for example no term in effect, an unmapped asset) | `onIndeterminate: "block"` |
 | not_evaluated | you supplied no terms for this resource, or no cap | `onNotEvaluated: "allow"` |
-| unavailable | signed mode only: the Tanilo API gave no readable signed answer | `onUnavailable: "block"` |
+
+unavailable is a guard outcome in signed mode, not a check state: the Tanilo API gave no readable signed answer.
+Default `onUnavailable: "block"`.
 
 Why: a payment that could not be compared is stopped, because the guard cannot tell a harmless gap from a
 wrong price. A resource you gave no terms for is allowed, because otherwise every unlisted purchase would stop;
@@ -121,17 +146,37 @@ The hook can only allow or stop a payment, so receipts come out through `onDecis
 
 ## Checking a receipt offline
 
-```bash
-pip install tanilo-receipt-verify
+In signed mode, save the receipt from `onDecision`:
+
+```js
+import fs from "node:fs";
+
+// in taniloGuard({ ..., onDecision })
+onDecision: (decision) => {
+  if (decision.receipt) fs.writeFileSync("receipt.json", JSON.stringify(decision.receipt, null, 2));
+},
 ```
 
+Download Tanilo's key set once:
+
+```bash
+curl -sS -o jwks.json https://tanilo.io/.well-known/jwks.json
+```
+
+Then check the receipt with [tanilo-receipt-verify](https://pypi.org/project/tanilo-receipt-verify/)
+(`pip install tanilo-receipt-verify`). The verify step itself makes no network call:
+
 ```python
-import json, urllib.request
+import json
 from tanilo_receipt_verify import verify
 
-receipt = {"jws": decision_receipt["jws"], "canonical_sha256": decision_receipt["canonical_sha256"]}
-keys = json.load(urllib.request.urlopen("https://tanilo.io/.well-known/jwks.json"))
-print(verify(receipt, jwks_by_issuer={"https://tanilo.io/.well-known/jwks.json": keys}).status)
+with open("receipt.json") as f:
+    receipt = json.load(f)
+with open("jwks.json") as f:
+    keys = json.load(f)
+
+result = verify(receipt, jwks_by_issuer={"https://tanilo.io/.well-known/jwks.json": keys})
+print(result.status, result.errors)
 ```
 
 ## Options
@@ -142,6 +187,6 @@ is a list of entries, each with `resource`, optional `match` (`"exact"` or `"pre
 payment does not carry (`seller`, `sku`, `unit`, optional `quantity`), optional `payTo`, and `terms` in the
 contract-price-match input shape.
 
-## Licence
+## License
 
 Apache-2.0. The copied rules are Apache-2.0; the test vectors are CC0-1.0.
