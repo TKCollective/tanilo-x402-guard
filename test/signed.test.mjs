@@ -126,3 +126,21 @@ test("signed mode never throws on malformed requirements", async () => {
   }
   assert.equal(api.calls.length, 0);
 });
+
+test("payee_match is never sent to the API and never in the receipt", async () => {
+  const api = mockApi();
+  const r = recorder();
+  const terms = [{ ...TERMS[0], payTo: "0x2222222222222222222222222222222222222222" }];
+  const out = await taniloGuard(signed(api, { terms, onPayeeMismatch: "allow", ...r }))(ctx({ amount: "1000000" }));
+  assert.equal(out, undefined);
+  const sent = JSON.stringify(api.calls[0].body);
+  assert.deepEqual(api.calls[0].body.checks.map((c) => c.check_type), ["contract_price_match", "spend_cap"]);
+  assert.doesNotMatch(sent, /payee|0x2222222222222222222222222222222222222222|payTo/i);
+  const d = r.decisions[0];
+  const payload = Buffer.from(d.receipt.jws.payload, "base64url").toString("utf8");
+  assert.doesNotMatch(payload, /payee_match|0x2222222222222222222222222222222222222222/);
+  const p = d.checks.find((c) => c.check_type === "payee_match");
+  assert.equal(p.status, "contradicted");
+  assert.equal(p.signed, undefined);
+  assert.match(p.summary, /a guard check, not a published Tanilo rule/);
+});

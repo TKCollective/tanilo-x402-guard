@@ -63,9 +63,12 @@ function readOptions(o) {
   if (!Array.isArray(terms)) throw new ConfigError("taniloGuard: terms must be an array of entries (see README)");
   terms.forEach((t, i) => {
     if (!t || typeof t !== "object") throw new ConfigError(`taniloGuard: terms[${i}] must be an object`);
-    const hasUrl = typeof t.resource === "string";
-    const hasPrefix = typeof t.resourcePrefix === "string";
-    if (hasUrl === hasPrefix) throw new ConfigError(`taniloGuard: terms[${i}] needs exactly one of resource (an exact URL) or resourcePrefix`);
+    if (typeof t.resource !== "string" || t.resource.length === 0) throw new ConfigError(`taniloGuard: terms[${i}].resource must be the resource URL`);
+    if (t.resourcePrefix !== undefined) throw new ConfigError(`taniloGuard: terms[${i}].resourcePrefix is not an option; set resource and match: "prefix"`);
+    const match = t.match ?? "exact";
+    if (match !== "exact" && match !== "prefix") throw new ConfigError(`taniloGuard: terms[${i}].match must be "exact" or "prefix"; got ${JSON.stringify(t.match)}`);
+    if (match === "prefix" && parsePrefix(t.resource) === null) throw new ConfigError(`taniloGuard: terms[${i}].resource must be an absolute http(s) URL with no query or fragment to be used as a prefix`);
+    if (t.payTo !== undefined && (typeof t.payTo !== "string" || t.payTo.length === 0)) throw new ConfigError(`taniloGuard: terms[${i}].payTo must be a non-empty string`);
     if (!Array.isArray(t.terms)) throw new ConfigError(`taniloGuard: terms[${i}].terms must be an array of contract terms in the contract-price-match input shape`);
   });
   const cap = o.cap ?? null;
@@ -90,6 +93,8 @@ function readOptions(o) {
     onIndeterminate: policy("onIndeterminate", "block"),
     onNotEvaluated: policy("onNotEvaluated", "allow"),
     onUnavailable: policy("onUnavailable", "block"),
+    onPayeeMismatch: policy("onPayeeMismatch", "block"),
+    nowSource: typeof o.now === "function" ? "now() option" : "system clock",
     timeoutMs,
     baseUrl: o.baseUrl ?? DEFAULT_BASE_URL,
     fetchImpl: o.fetch ?? globalThis.fetch,
@@ -132,16 +137,54 @@ function findAsset(assets, network, asset) {
   return null;
 }
 
-function findTerms(entries, r) {
-  const exact = entries.filter((e) => typeof e.resource === "string" && e.resource === r.url);
-  const found = exact.length ? exact : entries.filter((e) => typeof e.resourcePrefix === "string" && r.url.startsWith(e.resourcePrefix));
-  return { entries: found };
+// A prefix entry: origin (scheme, host, port) plus a path. Query and fragment are not allowed in a prefix.
+function parsePrefix(s) {
+  let u;
+  try { u = new URL(s); } catch { return null; }
+  if ((u.protocol !== "http:" && u.protocol !== "https:") || u.search || u.hash || s.includes("?") || s.includes("#")) return null;
+  const path = u.pathname.replace(/\/+$/, "");          // "/api/a/" and "/api/a" are the same prefix; "/" becomes ""
+  return { origin: u.origin, path };
 }
 
+// Does the resource URL fall under the prefix, on the same origin, at a path-segment boundary?
+// "/api/a" covers "/api/a" and "/api/a/x", never "/api/ab". The query string of the resource is not compared.
+function underPrefix(prefix, url) {
+  let u;
+  try { u = new URL(url); } catch { return false; }
+  if (u.origin !== prefix.origin) return false;
+  return u.pathname === prefix.path || u.pathname.startsWith(prefix.path + "/");
+}
+
+// Exact entries (match "exact", the default) compare the whole URL string. Exact beats prefix; among prefix
+// entries the longest path wins; two exact entries, or two prefixes of equal length, are ambiguous.
+function findTerms(entries, r) {
+  const exact = entries.filter((e) => (e.match ?? "exact") === "exact" && e.resource === r.url);
+  if (exact.length) return { entries: exact, how: "exact" };
+  const hits = entries
+    .filter((e) => e.match === "prefix")
+    .map((e) => ({ e, p: parsePrefix(e.resource) }))
+    .filter(({ p }) => p !== null && underPrefix(p, r.url));
+  if (!hits.length) return { entries: [], how: null };
+  const longest = Math.max(...hits.map(({ p }) => p.path.length));
+  return { entries: hits.filter(({ p }) => p.path.length === longest).map(({ e }) => e), how: "prefix" };
+}
+
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const samePayee = (a, b) => (EVM_ADDRESS.test(a) && EVM_ADDRESS.test(b) ? a.toLowerCase() === b.toLowerCase() : a === b);
+const GUARD_CHECK_LABEL = "a guard check, not a published Tanilo rule";
+
 async function decide(cfg, context) {
-  const at = cfg.now();
-  const offered_at = at.toISOString();
-  const r = readRequirement(context);
+  // The offer time: the rules read no clock, so the guard supplies one (the now() option, else the system clock).
+  let offered_at = null, timeProblem = null;
+  try {
+    const at = cfg.now();
+    if (!(at instanceof Date) || Number.isNaN(at.getTime())) timeProblem = "now() did not return a valid Date";
+    else offered_at = at.toISOString();
+  } catch (e) {
+    timeProblem = `now() failed: ${e?.message || String(e)}`;
+  }
+  const inputs = { offered_at, offer_time_source: cfg.nowSource };
+  const r = timeProblem ? { ok: false, why: `the offer time is unknown: ${timeProblem}` } : readRequirement(context);
   const requirement = r.ok ? { resource: r.url, scheme: r.scheme, network: r.network, asset: r.asset, amount: r.amount, payTo: r.payTo } : null;
   const checks = [];
   const add = (check_type, status, reason, extra = {}) => checks.push({ check_type, rule_id: RULE_ID[check_type], status, reason, ...extra });
@@ -150,7 +193,7 @@ async function decide(cfg, context) {
     for (const ct of ["contract_price_match", "spend_cap"]) {
       add(ct, "indeterminate", "requirement_unreadable", { summary: `${ct} indeterminate: ${r.why}` });
     }
-    return finish(cfg, { at: offered_at, requirement, amount: null, checks, receipt: null });
+    return finish(cfg, { inputs, requirement, amount: null, checks, receipt: null });
   }
 
   // Amount, in the currency the customer's asset map names. Never guessed.
@@ -168,6 +211,22 @@ async function decide(cfg, context) {
   const t = findTerms(cfg.terms, r);
   const entry = t.entries.length === 1 ? t.entries[0] : null;
   const toEvaluate = [];   // [{ check_type, input }]
+  inputs.terms_entry = entry ? { resource: entry.resource, match: entry.match ?? "exact", payTo: entry.payTo ?? null } : null;
+  inputs.terms_lookup = t.entries.length === 0 ? "no entry" : t.entries.length > 1 ? `ambiguous (${t.entries.length} ${t.how} entries)` : t.how;
+
+  // payee_match: a guard check, not a published Tanilo rule. Run only when the matched entry names a payTo.
+  // Never sent to the API and never part of a receipt.
+  if (entry && typeof entry.payTo === "string") {
+    const same = samePayee(r.payTo, entry.payTo);
+    checks.push({
+      check_type: "payee_match", rule_id: null, guard_check: true, status: same ? "verified" : "contradicted",
+      reason: same ? null : "payee_differs",
+      input: { payment_pay_to: r.payTo, terms_pay_to: entry.payTo, comparison: EVM_ADDRESS.test(r.payTo) && EVM_ADDRESS.test(entry.payTo) ? "EVM address, case-insensitive" : "exact string" },
+      summary: same
+        ? `payee_match verified: the payment goes to ${r.payTo}, the address named with the supplied terms (${GUARD_CHECK_LABEL})`
+        : `payee_match contradicted: the payment goes to ${r.payTo}, but the supplied terms name ${entry.payTo} (${GUARD_CHECK_LABEL})`,
+    });
+  }
 
   // contract_price_match
   if (t.entries.length === 0) {
@@ -175,9 +234,7 @@ async function decide(cfg, context) {
       summary: `contract_price_match not evaluated: no supplied terms for ${r.url}`,
     });
   } else if (t.entries.length > 1) {
-    add("contract_price_match", "indeterminate", "terms_entry_ambiguous", { summary: `contract_price_match indeterminate: more than one supplied terms entry matches ${r.url}` });
-  } else if (typeof entry.payTo === "string" && entry.payTo.toLowerCase() !== r.payTo.toLowerCase()) {
-    add("contract_price_match", "indeterminate", "pay_to_differs", { summary: `contract_price_match indeterminate: the payment goes to ${r.payTo}, not to ${entry.payTo} named with the supplied terms` });
+    add("contract_price_match", "indeterminate", "terms_entry_ambiguous", { summary: `contract_price_match indeterminate: ${t.entries.length} supplied terms entries match ${r.url} equally (${t.how})` });
   } else if (amountProblem) {
     add("contract_price_match", "indeterminate", "amount_unreadable", { summary: `contract_price_match indeterminate: ${amountProblem}` });
   } else {
@@ -252,7 +309,7 @@ async function decide(cfg, context) {
       }
     }
   }
-  return finish(cfg, { at: offered_at, requirement, amount, checks, receipt });
+  return finish(cfg, { inputs, requirement, amount, checks, receipt });
 }
 
 // ── wording ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -279,14 +336,17 @@ function summarize(ct, state, reason, ev, signed) {
 
 // ── policy ───────────────────────────────────────────────────────────────────────────────────────────────
 
-const ORDER = ["contract_price_match", "spend_cap"];
+const ORDER = ["contract_price_match", "spend_cap", "payee_match"];
 
-function finish(cfg, { at, requirement, amount, checks: unordered, receipt }) {
+function finish(cfg, { inputs, requirement, amount, checks: unordered, receipt }) {
   const checks = [...unordered].sort((a, b) => ORDER.indexOf(a.check_type) - ORDER.indexOf(b.check_type));
-  const of = (s) => checks.filter((c) => c.status === s);
-  const policy = { onIndeterminate: cfg.onIndeterminate, onNotEvaluated: cfg.onNotEvaluated, onUnavailable: cfg.onUnavailable, applied: [] };
+  const rules = checks.filter((c) => !c.guard_check);
+  const of = (s) => rules.filter((c) => c.status === s);
+  const policy = { onIndeterminate: cfg.onIndeterminate, onNotEvaluated: cfg.onNotEvaluated, onUnavailable: cfg.onUnavailable, onPayeeMismatch: cfg.onPayeeMismatch, applied: [] };
   const blockers = [];
   if (of("contradicted").length) { policy.applied.push("contradicted: always abort"); blockers.push(...of("contradicted")); }
+  const payee = checks.find((c) => c.check_type === "payee_match" && c.status === "contradicted");
+  if (payee) { policy.applied.push(`payee_match contradicted: onPayeeMismatch = ${cfg.onPayeeMismatch}`); if (cfg.onPayeeMismatch === "block") blockers.push(payee); }
   for (const [status, key] of [["unavailable", "onUnavailable"], ["indeterminate", "onIndeterminate"], ["not_evaluated", "onNotEvaluated"]]) {
     const hit = of(status);
     if (!hit.length) continue;
@@ -299,7 +359,8 @@ function finish(cfg, { at, requirement, amount, checks: unordered, receipt }) {
     allow,
     reason: allow ? null : `tanilo-x402-guard: ${blockers.map((c) => c.summary).join("; ")}`,
     mode: cfg.mode,
-    at,
+    at: inputs.offered_at,
+    inputs,
     requirement,
     amount,
     checks,
@@ -310,5 +371,5 @@ function finish(cfg, { at, requirement, amount, checks: unordered, receipt }) {
 
 function fallbackDecision(cfg, why) {
   const checks = ["contract_price_match", "spend_cap"].map((ct) => ({ check_type: ct, rule_id: RULE_ID[ct], status: "indeterminate", reason: "guard_error", summary: `${ct} indeterminate: ${why}` }));
-  return finish(cfg, { at: null, requirement: null, amount: null, checks, receipt: null });
+  return finish(cfg, { inputs: { offered_at: null, offer_time_source: cfg.nowSource }, requirement: null, amount: null, checks, receipt: null });
 }

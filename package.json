@@ -24,6 +24,9 @@
   "engines": {
     "node": ">=18"
   },
+  "peerDependencies": {
+    "@x402/core": ">=2.19.0 <3"
+  },
   "keywords": [
     "x402",
     "payments",

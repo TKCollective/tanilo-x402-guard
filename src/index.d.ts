@@ -1,4 +1,4 @@
-// Types for tanilo-x402-guard. The hook matches @x402/core's BeforePaymentCreationHook (2.19.0 to 2.28.0):
+// Types for tanilo-x402-guard. The hook matches @x402/core's BeforePaymentCreationHook (tested with 2.19.0 and 2.28.0):
 // (context: { paymentRequired, selectedRequirements }) => Promise<void | { abort: true; reason: string }>.
 
 export type Policy = "block" | "allow";
@@ -6,11 +6,15 @@ export type CheckStatus = "verified" | "contradicted" | "indeterminate" | "not_e
 
 /** One entry per resource: the offer fields the payment does not carry, and the customer's terms for it. */
 export interface TermsEntry {
-  /** Exact resource URL from the 402 response. Give this or resourcePrefix. */
-  resource?: string;
-  /** URL prefix. Used only when no entry matches the URL exactly. */
-  resourcePrefix?: string;
-  /** If given, a payment to any other address is indeterminate for contract_price_match. */
+  /** The resource URL from the 402 response (match "exact"), or a URL prefix (match "prefix"). */
+  resource: string;
+  /**
+   * "exact" (default): the whole URL string must be equal.
+   * "prefix": same origin (scheme, host, port) and a path-segment boundary: /api/a covers /api/a and /api/a/x,
+   * never /api/ab. Exact entries beat prefix entries; the longest prefix wins; equal-length ties are indeterminate.
+   */
+  match?: "exact" | "prefix";
+  /** If given, the guard check payee_match compares it with the payment's payTo (EVM addresses case-insensitively). */
   payTo?: string;
   seller: string;
   sku: string;
@@ -44,8 +48,11 @@ export interface Requirement {
 }
 
 export interface CheckResult {
-  check_type: "contract_price_match" | "spend_cap";
-  rule_id: string;
+  check_type: "contract_price_match" | "spend_cap" | "payee_match";
+  /** null for payee_match: a guard check, not a published Tanilo rule. */
+  rule_id: string | null;
+  /** true for payee_match. Never sent to the API, never in a receipt. */
+  guard_check?: boolean;
   status: CheckStatus;
   reason: string | null;
   summary: string;
@@ -60,10 +67,12 @@ export interface Decision {
   reason: string | null;
   mode: "local" | "signed";
   at: string | null;
+  /** The offer time used and where it came from, and which terms entry was used. */
+  inputs: { offered_at: string | null; offer_time_source: "now() option" | "system clock"; terms_entry?: { resource: string; match: "exact" | "prefix"; payTo: string | null } | null; terms_lookup?: string };
   requirement: Requirement | null;
   amount: { value: string; currency: string; decimals: number; atomic: string } | null;
   checks: CheckResult[];
-  policy: { onIndeterminate: Policy; onNotEvaluated: Policy; onUnavailable: Policy; applied: string[] };
+  policy: { onIndeterminate: Policy; onNotEvaluated: Policy; onUnavailable: Policy; onPayeeMismatch: Policy; applied: string[] };
   receipt: { jws: { payload: string; signatures: { protected: string; signature: string }[] }; canonical_sha256: string; kid: string; signature_checked: boolean } | null;
 }
 
@@ -75,6 +84,8 @@ export interface GuardOptions {
   onIndeterminate?: Policy;
   onNotEvaluated?: Policy;
   onUnavailable?: Policy;
+  /** payee_match contradicted (the payment's payTo differs from the terms entry's payTo). Default "block". */
+  onPayeeMismatch?: Policy;
   /** Signed mode. Default 3000. */
   timeoutMs?: number;
   /** Signed mode. Default https://api.tanilo.io */
@@ -85,7 +96,7 @@ export interface GuardOptions {
   agentId?: string;
   fetch?: typeof globalThis.fetch;
   onDecision?: (decision: Decision) => void | Promise<void>;
-  /** The time used as the offer time. Default: the current time. */
+  /** Returns the offer time. Default: the system clock. Recorded in decision.inputs. */
   now?: () => Date;
 }
 

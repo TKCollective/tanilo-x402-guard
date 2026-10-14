@@ -3,8 +3,10 @@
 A before-payment guard for x402 clients. Before your agent pays, it checks the payment against your own
 terms and your own budget, and stops the payment if they disagree.
 
-It plugs into x402's `onBeforePaymentCreation` hook (tested with `@x402/core` 2.19.0 and 2.28.0). The checks are Tanilo's
-published rules, [contract price](https://tanilo.io/docs/contract-price-check) and
+It plugs into x402's `onBeforePaymentCreation` hook. Supports x402 v2 only. The peer dependency range is
+`@x402/core >=2.19.0 <3`; the versions actually tested are 2.19.0 and 2.28.0, and the versions in between
+are not tested. The checks are Tanilo's published rules,
+[contract price](https://tanilo.io/docs/contract-price-check) and
 [spend cap](https://tanilo.io/docs/spend-cap-check), run unchanged.
 
 ```js
@@ -41,14 +43,23 @@ reaches the guard.
   set for that resource (default 1).
 - **Spend cap** (`spend-cap/v0.1`): whether the payment fits within the cap you supplied. For a cap per period,
   you supply `alreadySpent()`, which is called for every payment.
+- **Payment address** (`payee_match`, a guard check, not a published Tanilo rule): run only when your terms
+  entry names a `payTo`. It compares that address with the one the payment goes to (EVM addresses without
+  regard to letter case, other addresses exactly). A different address is contradicted, with both addresses
+  named, and stops the payment unless you set `onPayeeMismatch: "allow"`. It is never sent to the Tanilo API
+  and never appears in a receipt.
 
 Each result names what it compared, for example "the offered price matches the supplied term under
 contract-price-match/v0.1". Results computed in local mode are labelled unsigned.
 
+The offer time is the time the hook runs, from the system clock, or from your `now()` option if you give one.
+The rules read no clock, so the guard supplies it. The time used, and where it came from, are in
+`decision.inputs`.
+
 ## What it does not check
 
 - Whether your terms or your cap are authentic, complete or current. You supply them.
-- Who the seller is. A payment address you name next to the terms is compared as a string; nothing more.
+- Who the seller is. `payee_match` only compares two addresses; it does not establish who controls either.
 - Whether anything will be delivered, or whether paying is a good idea.
 - It does not reserve funds or keep track of spending. `alreadySpent()` is yours: count what was paid, and
   allow for payments in flight.
@@ -65,7 +76,7 @@ point) are indeterminate, never rounded.
 | Result | Meaning | Default |
 | --- | --- | --- |
 | verified | the check ran and the payment agrees with your terms or cap | allow |
-| contradicted | the check ran and the payment disagrees | always stop |
+| contradicted | the check ran and the payment disagrees | always stop (`payee_match`: `onPayeeMismatch: "block"`) |
 | indeterminate | the check could not compare (for example no term in effect, an unmapped asset) | `onIndeterminate: "block"` |
 | not_evaluated | you supplied no terms for this resource, or no cap | `onNotEvaluated: "allow"` |
 | unavailable | signed mode only: the Tanilo API gave no readable signed answer | `onUnavailable: "block"` |
@@ -74,6 +85,15 @@ Why: a payment that could not be compared is stopped, because the guard cannot t
 wrong price. A resource you gave no terms for is allowed, because otherwise every unlisted purchase would stop;
 set `onNotEvaluated: "block"` to allow only what you listed. Every result is passed to `onDecision`, whatever
 the policy.
+
+## Finding your terms for a payment
+
+Each `terms` entry has a `resource` URL. By default it must equal the resource URL in the seller's 402
+response exactly. With `match: "prefix"`, the entry also covers URLs below it, but only on the same origin
+(scheme, host and port) and only at a path-segment boundary: `https://seller.example/api/a` covers
+`/api/a` and `/api/a/x`, never `/api/ab`. An exact entry beats a prefix entry, and the longest prefix wins. Two
+entries that match equally well give an indeterminate result. A payment with no matching entry is
+not_evaluated for the contract price.
 
 ## Modes
 
@@ -85,7 +105,12 @@ the policy.
   are rate-limited. The guard also runs the rules locally, sends only input they can read, and reads each
   result from the signed payload. If the API does not answer in `timeoutMs` (default 3000), answers anything
   but 200, or gives no readable signed receipt, the result is unavailable; no result is assumed. If you pass
-  `jwks`, the receipt's signature is checked before its result is used.
+  the key-set option `jwks`, the receipt's signature is checked before its result is used. Without it, signed
+  mode uses the API's result after cross-checking it against the local rule (a different result is treated as
+  unavailable), and the receipt can be verified offline later.
+
+A signed receipt contains the offer, your supplied terms and your cap. Anyone you share a receipt with can read
+them.
 
 The hook can only allow or stop a payment, so receipts come out through `onDecision(decision)`:
 `decision.receipt` holds `jws`, `canonical_sha256` and `kid`.
@@ -107,11 +132,11 @@ print(verify(receipt, jwks_by_issuer={"https://tanilo.io/.well-known/jwks.json":
 
 ## Options
 
-`mode`, `terms`, `cap`, `assets`, `onIndeterminate`, `onNotEvaluated`, `onUnavailable`, `timeoutMs`,
-`baseUrl`, `jwks`, `agentId`, `fetch`, `now`, `onDecision`. Types are in `src/index.d.ts`. `terms` is a list of
-entries, each with `resource` (an exact URL) or `resourcePrefix`, the offer fields a payment does not carry
-(`seller`, `sku`, `unit`, optional `quantity`), optional `payTo`, and `terms` in the contract-price-match input
-shape.
+`mode`, `terms`, `cap`, `assets`, `onIndeterminate`, `onNotEvaluated`, `onUnavailable`, `onPayeeMismatch`,
+`timeoutMs`, `baseUrl`, `jwks`, `agentId`, `fetch`, `now`, `onDecision`. Types are in `src/index.d.ts`. `terms`
+is a list of entries, each with `resource`, optional `match` (`"exact"` or `"prefix"`), the offer fields a
+payment does not carry (`seller`, `sku`, `unit`, optional `quantity`), optional `payTo`, and `terms` in the
+contract-price-match input shape.
 
 ## Licence
 

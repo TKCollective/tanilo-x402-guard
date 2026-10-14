@@ -49,22 +49,151 @@ test("a quantity per payment divides the amount exactly into the unit price", as
   assert.match(out.reason, /unit_price_not_exact|not exact to 8 places/);
 });
 
-test("resourcePrefix matches when no exact entry does; two matches are indeterminate", async () => {
-  const pre = [{ ...TERMS[0], resource: undefined, resourcePrefix: "https://seller.example/" }];
-  assert.equal(await taniloGuard(base({ terms: pre }))(ctx({ amount: "1000000" })), undefined);
-  const two = [pre[0], { ...pre[0], resourcePrefix: "https://seller.example/w" }];
+// ── terms lookup ────────────────────────────────────────────────────────────────────────────────────────
+
+const entry = (resource, extra = {}) => ({ ...TERMS[0], resource, ...extra });
+async function lookup(terms, url) {
   const r = recorder();
-  const out = await taniloGuard(base({ terms: two, ...r }))(ctx({ amount: "1000000" }));
-  assert.equal(out.abort, true);
-  assert.equal(r.decisions[0].checks[0].reason, "terms_entry_ambiguous");
+  await taniloGuard(base({ terms, ...r }))(ctx({ url, amount: "1000000" }));
+  const d = r.decisions[0];
+  return { status: d.checks[0].status, reason: d.checks[0].reason, used: d.inputs.terms_entry, how: d.inputs.terms_lookup };
+}
+
+test("lookup is exact by default: a longer URL does not match an exact entry", async () => {
+  assert.equal((await lookup([entry("https://seller.example/api/a")], "https://seller.example/api/a")).status, "verified");
+  assert.equal((await lookup([entry("https://seller.example/api/a")], "https://seller.example/api/a/x")).status, "not_evaluated");
+  assert.equal((await lookup([entry("https://seller.example/api/a")], "https://seller.example/api/a?x=1")).status, "not_evaluated");
 });
 
-test("a payTo other than the one named with the terms is indeterminate (blocked by default)", async () => {
-  const terms = [{ ...TERMS[0], payTo: "0x2222222222222222222222222222222222222222" }];
+test("prefix only with match: \"prefix\", at a path-segment boundary", async () => {
+  const p = [entry("https://seller.example/api/a", { match: "prefix" })];
+  for (const url of ["https://seller.example/api/a", "https://seller.example/api/a/x", "https://seller.example/api/a/x/y?q=1"]) {
+    const got = await lookup(p, url);
+    assert.equal(got.status, "verified", url);
+    assert.equal(got.how, "prefix");
+  }
+  for (const url of ["https://seller.example/api/ab", "https://seller.example/api/", "https://seller.example/api"]) {
+    assert.equal((await lookup(p, url)).status, "not_evaluated", url);
+  }
+  // a trailing slash on the prefix means the same segment
+  assert.equal((await lookup([entry("https://seller.example/api/a/", { match: "prefix" })], "https://seller.example/api/a/x")).status, "verified");
+  assert.equal((await lookup([entry("https://seller.example/api/a/", { match: "prefix" })], "https://seller.example/api/ab")).status, "not_evaluated");
+});
+
+test("prefix only on the same origin: scheme, host and port", async () => {
+  const p = [entry("https://seller.example/api", { match: "prefix" })];
+  for (const url of ["http://seller.example/api/x", "https://evil.example/api/x", "https://seller.example:8443/api/x", "https://seller.example.evil.example/api/x", "https://sub.seller.example/api/x"]) {
+    assert.equal((await lookup(p, url)).status, "not_evaluated", url);
+  }
+  // the default port is the same origin
+  assert.equal((await lookup(p, "https://seller.example:443/api/x")).status, "verified");
+});
+
+test("exact beats prefix; longest prefix wins; equal-length prefixes are indeterminate", async () => {
+  const exactWins = [entry("https://seller.example/api", { match: "prefix", terms: [{ ...TERMS[0].terms[0], price_per_unit: "9.00" }] }), entry("https://seller.example/api/a/x")];
+  const e1 = await lookup(exactWins, "https://seller.example/api/a/x");
+  assert.equal(e1.status, "verified");
+  assert.equal(e1.how, "exact");
+
+  const longest = [entry("https://seller.example/api", { match: "prefix", terms: [{ ...TERMS[0].terms[0], price_per_unit: "9.00" }] }), entry("https://seller.example/api/a", { match: "prefix" })];
+  const e2 = await lookup(longest, "https://seller.example/api/a/x");
+  assert.equal(e2.status, "verified");
+  assert.equal(e2.used.resource, "https://seller.example/api/a");
+
+  const tie = [entry("https://seller.example/api/a", { match: "prefix" }), entry("https://seller.example/api/a/", { match: "prefix", sku: "other" })];
+  const e3 = await lookup(tie, "https://seller.example/api/a/x");
+  assert.equal(e3.status, "indeterminate");
+  assert.equal(e3.reason, "terms_entry_ambiguous");
+
+  const twoExact = [entry(URL_WEATHER), entry(URL_WEATHER, { sku: "other" })];
+  assert.equal((await lookup(twoExact, URL_WEATHER)).reason, "terms_entry_ambiguous");
+});
+
+test("terms entries are checked at setup", () => {
+  assert.throws(() => taniloGuard({ terms: [{ ...TERMS[0], resource: undefined, resourcePrefix: "https://x/" }] }), /resource/);
+  assert.throws(() => taniloGuard({ terms: [entry("https://seller.example/a", { match: "glob" })] }), /match must be/);
+  assert.throws(() => taniloGuard({ terms: [entry("/relative", { match: "prefix" })] }), /absolute http\(s\) URL/);
+  assert.throws(() => taniloGuard({ terms: [entry("https://seller.example/a?x=1", { match: "prefix" })] }), /no query/);
+  assert.throws(() => taniloGuard({ terms: [entry("ftp://seller.example/a", { match: "prefix" })] }), /absolute http\(s\) URL/);
+});
+
+// ── payee_match ─────────────────────────────────────────────────────────────────────────────────────────
+
+const PAYEE = "0x1111111111111111111111111111111111111111";
+
+test("payee_match: a matching payTo is verified (EVM addresses compared case-insensitively) and labelled a guard check", async () => {
+  const mixed = "0xAbCdEf0000000000000000000000000000000001";
   const r = recorder();
-  const out = await taniloGuard(base({ terms, ...r }))(ctx({ amount: "1000000" }));
+  const out = await taniloGuard(base({ terms: [entry(URL_WEATHER, { payTo: mixed.toLowerCase() })], ...r }))(ctx({ amount: "1000000", payTo: mixed }));
+  assert.equal(out, undefined);
+  const p = r.decisions[0].checks.find((c) => c.check_type === "payee_match");
+  assert.equal(p.status, "verified");
+  assert.equal(p.rule_id, null);
+  assert.equal(p.guard_check, true);
+  assert.match(p.summary, /\(a guard check, not a published Tanilo rule\)$/);
+  assert.equal(p.input.comparison, "EVM address, case-insensitive");
+});
+
+test("payee_match: a different payTo is contradicted and names both addresses; blocked by default", async () => {
+  const other = "0x2222222222222222222222222222222222222222";
+  const r = recorder();
+  const out = await taniloGuard(base({ terms: [entry(URL_WEATHER, { payTo: other })], ...r }))(ctx({ amount: "1000000", payTo: PAYEE }));
   assert.equal(out.abort, true);
-  assert.equal(r.decisions[0].checks[0].reason, "pay_to_differs");
+  assert.match(out.reason, new RegExp(`payee_match contradicted: the payment goes to ${PAYEE}, but the supplied terms name ${other} \\(a guard check, not a published Tanilo rule\\)`));
+  const d = r.decisions[0];
+  assert.equal(d.checks.find((c) => c.check_type === "contract_price_match").status, "verified");   // the price check is unaffected
+  assert.ok(d.policy.applied.includes("payee_match contradicted: onPayeeMismatch = block"));
+});
+
+test("payee_match: onPayeeMismatch: allow lets the payment through and still reports the mismatch", async () => {
+  const r = recorder();
+  const out = await taniloGuard(base({ terms: [entry(URL_WEATHER, { payTo: "0x2222222222222222222222222222222222222222" })], onPayeeMismatch: "allow", ...r }))(ctx({ amount: "1000000", payTo: PAYEE }));
+  assert.equal(out, undefined);
+  assert.equal(r.decisions[0].checks.find((c) => c.check_type === "payee_match").status, "contradicted");
+  assert.ok(r.decisions[0].policy.applied.includes("payee_match contradicted: onPayeeMismatch = allow"));
+  // a contradicted price still aborts under onPayeeMismatch: allow
+  const out2 = await taniloGuard(base({ terms: [entry(URL_WEATHER, { payTo: "0x2222222222222222222222222222222222222222" })], onPayeeMismatch: "allow" }))(ctx({ amount: "2000000", payTo: PAYEE }));
+  assert.equal(out2.abort, true);
+  assert.doesNotMatch(out2.reason, /payee_match/);
+});
+
+test("payee_match: not run when the terms entry names no payTo", async () => {
+  const r = recorder();
+  assert.equal(await taniloGuard(base(r))(ctx({ amount: "1000000", payTo: "0x9999999999999999999999999999999999999999" })), undefined);
+  assert.equal(r.decisions[0].checks.find((c) => c.check_type === "payee_match"), undefined);
+  assert.deepEqual(r.decisions[0].checks.map((c) => c.check_type), ["contract_price_match", "spend_cap"]);
+});
+
+test("payee_match: non-EVM addresses are compared exactly", async () => {
+  const sol = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin";
+  const out = await taniloGuard(base({ terms: [entry(URL_WEATHER, { payTo: sol.toLowerCase() })] }))(ctx({ amount: "1000000", payTo: sol }));
+  assert.equal(out.abort, true);
+  assert.match(out.reason, /payee_match contradicted/);
+});
+
+// ── offer time ──────────────────────────────────────────────────────────────────────────────────────────
+
+test("the offer time comes from now() when given, else the system clock, and is recorded in decision.inputs", async () => {
+  const r1 = recorder();
+  await taniloGuard(base(r1))(ctx());
+  assert.deepEqual({ offered_at: r1.decisions[0].inputs.offered_at, src: r1.decisions[0].inputs.offer_time_source }, { offered_at: "2026-10-14T12:00:00.000Z", src: "now() option" });
+  assert.equal(r1.decisions[0].checks[0].input.offer.offered_at, "2026-10-14T12:00:00.000Z");
+  const r2 = recorder();
+  const before = Date.now();
+  await taniloGuard({ terms: TERMS, assets: ASSETS, ...r2 })(ctx());
+  const used = Date.parse(r2.decisions[0].inputs.offered_at);
+  assert.equal(r2.decisions[0].inputs.offer_time_source, "system clock");
+  assert.ok(used >= before && used <= Date.now());
+});
+
+test("a now() that throws or returns no valid Date is indeterminate, not a guess", async () => {
+  for (const now of [() => { throw new Error("clock"); }, () => "2026-10-14T12:00:00Z", () => new Date("nonsense")]) {
+    const r = recorder();
+    const out = await taniloGuard(base({ now, ...r }))(ctx());
+    assert.equal(out.abort, true);
+    assert.equal(r.decisions[0].inputs.offered_at, null);
+    assert.match(r.decisions[0].checks[0].summary, /the offer time is unknown/);
+  }
 });
 
 // ── spend cap ───────────────────────────────────────────────────────────────────────────────────────────
