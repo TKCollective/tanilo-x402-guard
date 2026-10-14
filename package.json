@@ -1,0 +1,38 @@
+{
+  "name": "tanilo-x402-guard",
+  "version": "0.1.0",
+  "description": "A before-payment guard for x402 clients: checks the payment an agent is about to make against the customer's own supplied terms and cap, with Tanilo's published rules.",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:x402": "node test/compat/run.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "x402",
+    "payments",
+    "agents",
+    "guard",
+    "tanilo"
+  ],
+  "homepage": "https://tanilo.io/docs/contract-price-check",
+  "license": "Apache-2.0",
+  "author": "TK Collective LLC <joe@tanilo.io>",
+  "private": true
+}

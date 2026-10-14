@@ -1,0 +1,10 @@
+tanilo-x402-guard
+Copyright 2026 TK Collective LLC
+
+This product includes software developed by TK Collective LLC (Tanilo), https://tanilo.io.
+
+src/rules/contract-price.js, src/rules/contract-price-jcs.js and src/rules/spend-cap.js are unchanged copies of
+the published rules in TKCollective/tanilo-receipt-spec (Apache-2.0).
+
+test/vectors/contract-price.vectors.json and test/vectors/spend-cap.vectors.json are unchanged copies of the
+published vectors, dedicated to the public domain under CC0 1.0 Universal (test/vectors/LICENSE-CC0-1.0.txt).

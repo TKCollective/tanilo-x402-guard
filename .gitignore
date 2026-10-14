@@ -1,0 +1,4 @@
+node_modules/
+test/compat/2.*/
+examples/node_modules/
+examples/package-lock.json

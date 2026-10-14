@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "local": "node fetch-local.mjs"
+  },
+  "dependencies": {
+    "@x402/core": "2.28.0",
+    "@x402/fetch": "2.28.0",
+    "tanilo-x402-guard": "file:.."
+  }
+}
