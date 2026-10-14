@@ -1,9 +1,9 @@
-# tanilo-x402-guard
+# @tanilo/x402-guard
 
 A before-payment guard for x402 clients. Before your agent pays, it checks the payment against the terms and budget you supply, and stops the payment when a check finds they disagree. What happens when a check can't run, or when you supplied nothing to check against, is set by your policies (see Results and default policies).
 
 ```bash
-npm install tanilo-x402-guard @x402/core @x402/fetch
+npm install @tanilo/x402-guard @x402/core @x402/fetch
 ```
 
 You also need the x402 payment scheme package for your network, for example `@x402/evm`.
@@ -26,7 +26,7 @@ This is an integration fragment: yourScheme is the x402 payment scheme client fo
 
 ```js
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
-import { taniloGuard } from "tanilo-x402-guard";
+import { taniloGuard } from "@tanilo/x402-guard";
 
 const NET = "eip155:8453";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";

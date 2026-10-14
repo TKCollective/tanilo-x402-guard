@@ -7,7 +7,7 @@
 // What you get: decision.receipt = { jws, canonical_sha256, kid, signature_checked }, passed to onDecision.
 // Keep it; tanilo-receipt-verify checks it offline (see README).
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
-import { taniloGuard } from "tanilo-x402-guard";
+import { taniloGuard } from "@tanilo/x402-guard";
 
 const NET = "eip155:8453";
 const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 TK Collective LLC
 //
-// tanilo-x402-guard: a before-payment guard for x402 clients. It checks the payment the client is about to
+// @tanilo/x402-guard: a before-payment guard for x402 clients. It checks the payment the client is about to
 // make against the customer's own supplied terms and cap, using Tanilo's published rules, and returns what
 // x402's onBeforePaymentCreation hook accepts: nothing (go ahead) or { abort: true, reason }.
 //
@@ -357,7 +357,7 @@ function finish(cfg, { inputs, requirement, amount, checks: unordered, receipt }
   const allow = blockers.length === 0;
   return {
     allow,
-    reason: allow ? null : `tanilo-x402-guard: ${blockers.map((c) => c.summary).join("; ")}`,
+    reason: allow ? null : `@tanilo/x402-guard: ${blockers.map((c) => c.summary).join("; ")}`,
     mode: cfg.mode,
     at: inputs.offered_at,
     inputs,

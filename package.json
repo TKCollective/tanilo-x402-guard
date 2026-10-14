@@ -1,5 +1,5 @@
 {
-  "name": "tanilo-x402-guard",
+  "name": "@tanilo/x402-guard",
   "version": "0.1.0",
   "description": "A before-payment guard for x402 clients: checks the payment an agent is about to make against the customer's own supplied terms and cap, with Tanilo's published rules.",
   "type": "module",
@@ -36,6 +36,9 @@
   ],
   "homepage": "https://github.com/TKCollective/tanilo-x402-guard#readme",
   "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "author": "Tanilo",
   "repository": {
     "type": "git",

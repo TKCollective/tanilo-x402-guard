@@ -47,7 +47,7 @@ test(`@x402/core ${VERSION}: a wrong price is stopped before any payment is crea
   const s = await setup();
   try {
     await assert.rejects(s.fetchWithPay(s.seller.url), (e) => {
-      assert.match(e.message, /Payment creation aborted: tanilo-x402-guard: contract_price_match contradicted: offered 2\.00 USD above term price 1\.00/);
+      assert.match(e.message, /Payment creation aborted: @tanilo\/x402-guard: contract_price_match contradicted: offered 2\.00 USD above term price 1\.00/);
       return true;
     });
     assert.equal(s.seller.seen.paid, 0);

@@ -5,7 +5,7 @@
 //   cd examples && npm install && node fetch-local.mjs
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
 import { encodePaymentRequiredHeader } from "@x402/core/http";
-import { taniloGuard } from "tanilo-x402-guard";
+import { taniloGuard } from "@tanilo/x402-guard";
 import { startMockSeller, mockScheme } from "./mock-seller.mjs";
 
 const NET = "eip155:8453";

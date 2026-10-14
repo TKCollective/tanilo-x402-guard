@@ -1,4 +1,4 @@
-// Types for tanilo-x402-guard. The hook matches @x402/core's BeforePaymentCreationHook (tested with 2.19.0 and 2.28.0):
+// Types for @tanilo/x402-guard. The hook matches @x402/core's BeforePaymentCreationHook (tested with 2.19.0 and 2.28.0):
 // (context: { paymentRequired, selectedRequirements }) => Promise<void | { abort: true; reason: string }>.
 
 export type Policy = "block" | "allow";
