@@ -1,7 +1,6 @@
 # tanilo-x402-guard
 
-A before-payment guard for x402 clients. Before your agent pays, it checks the payment against your own
-terms and your own budget, and stops the payment if they disagree.
+A before-payment guard for x402 clients. Before your agent pays, it checks the payment against the terms and budget you supply, and stops the payment when a check finds they disagree. What happens when a check can't run, or when you supplied nothing to check against, is set by your policies (see Results and default policies).
 
 ```bash
 npm install tanilo-x402-guard @x402/core @x402/fetch
@@ -22,6 +21,8 @@ published in [tanilo-receipt-spec](https://github.com/TKCollective/tanilo-receip
 [`checks/spend-cap/`](https://github.com/TKCollective/tanilo-receipt-spec/tree/4d8ca9f498a3ff00f650db83b13dbb8f2b2448f7/checks/spend-cap)
 (`spend-cap.js`, `spend-cap.vectors.json`), at the commit this package copies (`4d8ca9f`). More at
 [tanilo.io](https://tanilo.io).
+
+This is an integration fragment: yourScheme is the x402 payment scheme client for your network, built with its scheme package and your signer. For a complete runnable version with a mock seller and mock scheme, see examples/fetch-local.mjs.
 
 ```js
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
@@ -84,8 +85,7 @@ The rules read no clock, so the guard supplies it. The time used, and where it c
 - Whether your terms or your cap are authentic, complete or current. You supply them.
 - Who the seller is. `payee_match` only compares two addresses; it does not establish who controls either.
 - Whether anything will be delivered, or whether paying is a good idea.
-- It does not reserve funds or keep track of spending. `alreadySpent()` is yours: count what was paid, and
-  allow for payments in flight.
+- It does not reserve funds or keep track of spending. Your system supplies `alreadySpent()` and must handle purchases made at the same time: two payments checked against the same remaining budget can both pass and together exceed it.
 
 ## Amounts
 
@@ -98,7 +98,7 @@ point) are indeterminate, never rounded.
 
 | Check state | Meaning | Default |
 | --- | --- | --- |
-| verified | the check ran and the payment agrees with your terms or cap | allow |
+| verified | the check matched what you supplied: the price term, the cap, or (payee_match) the payment address | doesn't allow the payment by itself; the other checks and policies still apply |
 | contradicted | the check ran and the payment disagrees | always stops, except `payee_match`, which follows `onPayeeMismatch` (default block) |
 | indeterminate | the check could not compare (for example no term in effect, an unmapped asset) | `onIndeterminate: "block"` |
 | not_evaluated | you supplied no terms for this resource, or no cap | `onNotEvaluated: "allow"` |
@@ -107,8 +107,8 @@ unavailable is a guard outcome in signed mode, not a check state: the Tanilo API
 Default `onUnavailable: "block"`.
 
 Why: a payment that could not be compared is stopped, because the guard cannot tell a harmless gap from a
-wrong price. A resource you gave no terms for is allowed, because otherwise every unlisted purchase would stop;
-set `onNotEvaluated: "block"` to allow only what you listed. Every result is passed to `onDecision`, whatever
+wrong price. A resource you gave no terms for is allowed, because otherwise every unlisted purchase would stop.
+Set `onNotEvaluated: "block"` to stop the payment whenever a check is not evaluated, including when no terms entry matches or no cap is supplied. Every result is passed to `onDecision`, whatever
 the policy.
 
 ## Finding your terms for a payment
@@ -116,26 +116,23 @@ the policy.
 Each `terms` entry has a `resource` URL. By default it must equal the resource URL in the seller's 402
 response exactly. With `match: "prefix"`, the entry also covers URLs below it, but only on the same origin
 (scheme, host and port) and only at a path-segment boundary: `https://seller.example/api/a` covers
-`/api/a` and `/api/a/x`, never `/api/ab`. An exact entry beats a prefix entry, and the longest prefix wins. Two
+`/api/a` and `/api/a/x`, never `/api/ab`. Prefix matching ignores the resource URL's query string, and a prefix you configure may not contain a query string or fragment. An exact entry beats a prefix entry, and the longest prefix wins. Two
 entries that match equally well give an indeterminate result. A payment with no matching entry is
 not_evaluated for the contract price.
 
 ## Modes
 
-- **`mode: "local"`** (default): the rules run inside your process. Nothing is sent anywhere. Results are
-  unsigned.
+- **`mode: "local"`** (default): the rules run inside your process. The guard makes no network requests and sends nothing to Tanilo. Results are unsigned.
 - **`mode: "signed"`**: the guard sends the payment's terms and the inputs you supplied (the offer, your terms,
   your cap and what `alreadySpent()` returned) to the Tanilo API, `POST https://api.tanilo.io/v1/verify-facts`,
   and gets a signed receipt back. The receipt carries those inputs. No key is needed during the beta; requests
   are rate-limited. The guard also runs the rules locally, sends only input they can read, and reads each
   result from the signed payload. If the API does not answer in `timeoutMs` (default 3000), answers anything
-  but 200, or gives no readable signed receipt, the result is unavailable; no result is assumed. If you pass
-  the key-set option `jwks`, the receipt's signature is checked before its result is used. Without it, signed
+  but 200, or gives no readable signed receipt, the result is unavailable; no result is assumed. If you pass `jwks`, use a copy of Tanilo's key set you have obtained over HTTPS from tanilo.io and trust; the receipt's signature is checked against it before its result is used. Without it, signed
   mode uses the API's result after cross-checking it against the local rule (a different result is treated as
   unavailable), and the receipt can be verified offline later.
 
-A signed receipt contains the offer, your supplied terms and your cap. Anyone you share a receipt with can read
-them.
+A signed receipt contains the inputs sent for the checks it covers: the offer, plus your terms, your cap and the amount already spent where those checks ran. Anyone you share a receipt with can read them.
 
 The API requires `subject.claim_hash`. The guard sets it to `sha256-` followed by the SHA-256 hex digest of the
 RFC 8785 canonical JSON of the one check's `input` object when it sends one check (the same value tanilo-mcp
@@ -146,7 +143,7 @@ The hook can only allow or stop a payment, so receipts come out through `onDecis
 
 ## Checking a receipt offline
 
-In signed mode, save the receipt from `onDecision`:
+In signed mode, receipts come out through `onDecision`. For a one-receipt demo, use this callback (import fs at the top of your module). It overwrites receipt.json each time; in real use, store each receipt separately.
 
 ```js
 import fs from "node:fs";
@@ -157,7 +154,7 @@ onDecision: (decision) => {
 },
 ```
 
-Download Tanilo's key set once:
+Get Tanilo's key set over HTTPS from tanilo.io and keep that copy for offline checks. If a later receipt was signed with a newer key, fetch the key set again.
 
 ```bash
 curl -sS -o jwks.json https://tanilo.io/.well-known/jwks.json
@@ -178,6 +175,8 @@ with open("jwks.json") as f:
 result = verify(receipt, jwks_by_issuer={"https://tanilo.io/.well-known/jwks.json": keys})
 print(result.status, result.errors)
 ```
+
+Only `status == "valid"` means the receipt verified. An empty error list on its own does not. A valid receipt shows the check ran on those inputs and was signed by Tanilo; it does not show your terms were genuine, who the seller is, or that the payment should be made.
 
 ## Options
 
