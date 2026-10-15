@@ -8,7 +8,7 @@ npm install @tanilo/x402-guard @x402/core @x402/fetch
 
 You also need the x402 payment scheme package for your network, for example `@x402/evm`.
 
-Status: 0.1.0, early release. The rules are contract-price-match/v0.1 and spend-cap/v0.1.
+Status: early release (0.1.x). The rules are contract-price-match/v0.1 and spend-cap/v0.1.
 
 It plugs into x402's `onBeforePaymentCreation` hook. Supports x402 v2 only. The peer dependency range is
 `@x402/core >=2.19.0 <3`; the versions actually tested are 2.19.0 and 2.28.0, and the versions in between
