@@ -1,6 +1,6 @@
 {
   "name": "@tanilo/x402-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A before-payment guard for x402 clients: checks the payment an agent is about to make against the customer's own supplied terms and cap, with Tanilo's published rules.",
   "type": "module",
   "main": "./src/index.js",
@@ -15,7 +15,8 @@
     "src/",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
@@ -29,9 +30,14 @@
   },
   "keywords": [
     "x402",
+    "x402-client",
+    "agent-payments",
+    "ai-agents",
     "payments",
-    "agents",
-    "guard",
+    "before-payment",
+    "spend-cap",
+    "contract-price",
+    "signed-receipts",
     "tanilo"
   ],
   "homepage": "https://github.com/TKCollective/tanilo-x402-guard#readme",
