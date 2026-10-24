@@ -68,14 +68,17 @@ reaches the guard.
   set for that resource (default 1).
 - **Spend cap** (`spend-cap/v0.1`): whether the payment fits within the cap you supplied. For a cap per period,
   you supply `alreadySpent()`, which is called for every payment.
-- **Payment address, asset and network** (`payee_match`, `asset_match`, `network_match`: guard checks, not
-  published Tanilo rules): your terms entry may name the `payTo`, `asset` and `network` you agreed to. Each one
-  named is compared with the payment's (EVM addresses without regard to letter case, other addresses and the
-  network exactly). A different address, asset or network is contradicted, with both values named, and stops the
-  payment; for the address only, `onPayeeMismatch: "allow"` lets it through. One you do not name is
-  not_evaluated and follows `onNotEvaluated`, like a resource you gave no terms for. A price match alone does
-  not establish who is paid or in what: a seller can keep the amount and change the recipient. These checks are
-  never sent to the Tanilo API and never appear in a receipt.
+- **Payment address, asset and network** (`payee_match`, `asset_match`, `network_match`): your terms entry may
+  declare the `payTo`, `asset` and `network` you agreed to. Each declared field is compared with the payment's
+  before the payment is created (EVM addresses without regard to letter case, other addresses and the network
+  exactly). A mismatch is contradicted, with both values named, and stops the payment; for the address only,
+  `onPayeeMismatch: "allow"` lets it through. An undeclared field is reported `not_evaluated` and follows
+  `onNotEvaluated`, which still defaults to `"allow"`: by default, a payment to an undeclared recipient, asset
+  or network is allowed. To require all three bindings, declare all three in every terms entry, or set
+  `onNotEvaluated: "block"`. We recommend that setting for production. A price match alone does not establish
+  who is paid or in what: a seller can keep the amount and change the recipient. These are local guard checks,
+  not published Tanilo rules: they are never sent to the Tanilo API and are not included as findings in the
+  signed receipt (signed mode). They appear only in `decision.checks`.
 
 Each result names what it compared, for example "the offered price matches the supplied term under
 contract-price-match/v0.1". Results computed in local mode are labeled unsigned.
@@ -119,13 +122,18 @@ the policy.
 
 ## Upgrading from 0.1.x
 
-Add `payTo`, `asset` and `network` to each terms entry: without them the guard checks the price but not who is
-paid, in what, or on which network (0.1.x never compared asset or network, and compared the recipient only when
-`payTo` was named). The three binding checks are now reported as `not_evaluated` when the entry does not name
-the field; `payee_match` used to be absent in that case. Under the default `onNotEvaluated: "allow"` such
-payments are still allowed. Under `onNotEvaluated: "block"` they now stop until the entry names all three.
-`decision.checks` gained two entries (`asset_match`, `network_match`), so code that counts or iterates the
-checks should filter on `guard_check` or `check_type`.
+0.1.x never compared the payment's asset or network with your terms, and compared the recipient only when the
+entry named a `payTo`. In 0.2.0 a terms entry may declare `payTo`, `asset` and `network`; each declared field is
+compared with the payment's before the payment is created, and a mismatch stops it. An undeclared field is
+reported `not_evaluated` and follows `onNotEvaluated`, which still defaults to `"allow"`: if you change
+nothing, payments to an undeclared recipient, asset or network are still allowed, exactly as in 0.1.x. To
+require all three bindings, declare all three in every terms entry, or set `onNotEvaluated: "block"`. We
+recommend that setting for production.
+
+Two visible changes: `payee_match` is now reported as `not_evaluated` when the entry names no `payTo` (it used
+to be absent), and `decision.checks` gained `asset_match` and `network_match`, so code that counts or iterates
+the checks should filter on `guard_check` or `check_type`. These binding checks are local guard checks; they are
+not sent to the Tanilo API and are not included as findings in the signed receipt.
 
 ## Finding your terms for a payment
 
