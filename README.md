@@ -1,6 +1,6 @@
 # @tanilo/x402-guard
 
-A before-payment guard for x402 clients. Before your agent pays, it checks the payment against the terms and budget you supply, and stops the payment when a check finds they disagree. What happens when a check can't run, or when you supplied nothing to check against, is set by your policies (see Results and default policies).
+A before-payment guard for x402 clients. It compares the selected payment option with the terms and budget you supply before payment creation. Contradicted price, spend-cap, asset and network checks block payment creation. A recipient mismatch blocks by default, but onPayeeMismatch: "allow" overrides that decision. Checks that cannot establish a result, or lack supplied expectations, follow the configured policies (see Results and default policies).
 
 ```bash
 npm install @tanilo/x402-guard @x402/core @x402/fetch
@@ -12,9 +12,10 @@ Status: early release (0.2.x). The rules are contract-price-match/v0.1 and spend
 
 It plugs into x402's `onBeforePaymentCreation` hook. Supports x402 v2 only. The peer dependency range is
 `@x402/core >=2.19.0 <3`; the versions actually tested are 2.19.0 and 2.28.0, and the versions in between
-are not tested. The checks are Tanilo's published rules,
-[contract price](https://tanilo.io/docs/contract-price-check) and
-[spend cap](https://tanilo.io/docs/spend-cap-check), run unchanged. The rules and their CC0 test vectors are
+are not tested. The contract-price and spend-cap checks run Tanilo's published rules unchanged. Recipient, asset
+and network comparisons are additional local guard checks, described below; they are not part of those published
+rules. The rules, [contract price](https://tanilo.io/docs/contract-price-check) and
+[spend cap](https://tanilo.io/docs/spend-cap-check), and their CC0 test vectors are
 published in [tanilo-receipt-spec](https://github.com/TKCollective/tanilo-receipt-spec):
 [`checks/contract-price-match/`](https://github.com/TKCollective/tanilo-receipt-spec/tree/4d8ca9f498a3ff00f650db83b13dbb8f2b2448f7/checks/contract-price-match)
 (`contract-price.js`, `contract-price.vectors.json`) and
@@ -73,11 +74,15 @@ reaches the guard.
   before the payment is created (EVM addresses without regard to letter case, other addresses and the network
   exactly). A mismatch is contradicted, with both values named, and stops the payment; for the address only,
   `onPayeeMismatch: "allow"` lets it through. An undeclared field is reported `not_evaluated` and follows
-  `onNotEvaluated`, which still defaults to `"allow"`: by default, a payment to an undeclared recipient, asset
-  or network is allowed. To require all three bindings, declare all three in every terms entry, or set
-  `onNotEvaluated: "block"`. We recommend that setting for production. A price match alone does not establish
-  who is paid or in what: a seller can keep the amount and change the recipient. These are local guard checks,
-  not published Tanilo rules: they are never sent to the Tanilo API and are not included as findings in the
+  `onNotEvaluated`. With the default onNotEvaluated: "allow", an undeclared recipient, asset or network does not
+  itself block payment creation; other checks may still block it. Existing users configured with onNotEvaluated:
+  "block" must now supply all three binding fields for an applicable terms entry to pass these checks. To require all
+  three bindings, declare payTo, asset and network in every applicable terms entry, set onNotEvaluated: "block", and
+  keep onPayeeMismatch: "block" (the default). Missing declarations then block payment creation rather than supplying
+  an inferred expectation. onNotEvaluated: "block" also applies to other checks reported as not_evaluated, including
+  missing price terms or a missing spend cap. We recommend that setting for production. A price match alone does not
+  establish who is paid or in what: a seller can keep the amount and change the recipient. These are local guard
+  checks, not published Tanilo rules: they are never sent to the Tanilo API and are not included as findings in the
   signed receipt (signed mode). They appear only in `decision.checks`.
 
 Each result names what it compared, for example "the offered price matches the supplied term under
@@ -124,11 +129,15 @@ the policy.
 
 0.1.x never compared the payment's asset or network with your terms, and compared the recipient only when the
 entry named a `payTo`. In 0.2.0 a terms entry may declare `payTo`, `asset` and `network`; each declared field is
-compared with the payment's before the payment is created, and a mismatch stops it. An undeclared field is
-reported `not_evaluated` and follows `onNotEvaluated`, which still defaults to `"allow"`: if you change
-nothing, payments to an undeclared recipient, asset or network are still allowed, exactly as in 0.1.x. To
-require all three bindings, declare all three in every terms entry, or set `onNotEvaluated: "block"`. We
-recommend that setting for production.
+compared with the payment's before payment creation. Asset and network mismatches always block; recipient
+mismatches block unless onPayeeMismatch: "allow" is configured. An undeclared field is reported `not_evaluated` and
+follows `onNotEvaluated`. With the default onNotEvaluated: "allow", an undeclared recipient, asset or network does
+not itself block payment creation; other checks may still block it. Existing users configured with onNotEvaluated:
+"block" must now supply all three binding fields for an applicable terms entry to pass these checks. To require all
+three bindings, declare payTo, asset and network in every applicable terms entry, set onNotEvaluated: "block", and
+keep onPayeeMismatch: "block" (the default). Missing declarations then block payment creation rather than supplying
+an inferred expectation. onNotEvaluated: "block" also applies to other checks reported as not_evaluated, including
+missing price terms or a missing spend cap. We recommend that setting for production.
 
 Two visible changes: `payee_match` is now reported as `not_evaluated` when the entry names no `payTo` (it used
 to be absent), and `decision.checks` gained `asset_match` and `network_match`, so code that counts or iterates

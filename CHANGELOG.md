@@ -8,20 +8,26 @@
   whose asset or network differed (among the assets in your map) was allowed; so was a changed recipient when the
   entry named no `payTo`.
 - Behavior change: `payee_match`, `asset_match` and `network_match` are now reported as `not_evaluated` when the
-  entry does not name the field (previously `payee_match` was simply absent), and follow `onNotEvaluated`. With
-  the default `onNotEvaluated: "allow"` nothing changes for such payments; with `onNotEvaluated: "block"` a terms
-  entry must now name all three, or those payments stop.
+  entry does not name the field (previously `payee_match` was simply absent), and follow `onNotEvaluated`. With the
+  default onNotEvaluated: "allow", an undeclared recipient, asset or network does not itself block payment creation;
+  other checks may still block it. Existing users configured with onNotEvaluated: "block" must now supply all three
+  binding fields for an applicable terms entry to pass these checks.
 - `decision.inputs.terms_entry` carries `asset` and `network` next to `payTo`.
-- Caveat: an undeclared binding is `not_evaluated` and follows `onNotEvaluated`, which still defaults to `"allow"`;
-  to require all three, declare them in every terms entry or set `onNotEvaluated: "block"` (recommended for
-  production). The binding checks are local guard checks, not sent to the API and not in the signed receipt.
+- Caveat: an undeclared binding is `not_evaluated` and follows `onNotEvaluated`. To require all three bindings,
+  declare payTo, asset and network in every applicable terms entry, set onNotEvaluated: "block", and keep
+  onPayeeMismatch: "block" (the default). Missing declarations then block payment creation rather than supplying an
+  inferred expectation. onNotEvaluated: "block" also applies to other checks reported as not_evaluated, including
+  missing price terms or a missing spend cap. We recommend that setting for production. The binding checks are local
+  guard checks, not sent to the API and not in the signed receipt.
 - Why: a price match alone does not establish who is paid, in what, or where. Found while replaying x402 issue
   #3866 (an inflated 402 amount) against the guard: in 0.1.x a payment at the agreed price but to another
   recipient (entry without `payTo`), in another mapped asset, or on another mapped network was allowed.
 - Tests: 79 (12 new in `test/terms-binding.test.mjs`, 11 of which failed on 0.1.1; among them, at the agreed
   price: a changed recipient, a changed asset, and a changed network together with that network's mapped
   asset), plus the compatibility runs inside @x402/core 2.19.0 and 2.28.0. The published rules, their copied code and the vectors are unchanged.
-  Signed mode was not re-tested against the live API for this release; the bindings never reach it.
+  Signed mode was exercised with a mocked API in the local suite, including assertions that binding checks are
+  excluded from API requests and receipt findings. Signed mode was not re-tested against the live API for this
+  release.
 
 ## 0.1.1 (2026-10-15)
 
