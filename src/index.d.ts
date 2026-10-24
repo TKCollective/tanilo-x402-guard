@@ -16,6 +16,10 @@ export interface TermsEntry {
   match?: "exact" | "prefix";
   /** If given, the guard check payee_match compares it with the payment's payTo (EVM addresses case-insensitively). */
   payTo?: string;
+  /** If given, the guard check asset_match compares it with the payment's asset (EVM addresses case-insensitively). */
+  asset?: string;
+  /** If given, the guard check network_match compares it with the payment's network (exact string, e.g. "eip155:8453"). */
+  network?: string;
   seller: string;
   sku: string;
   unit: string;
@@ -48,10 +52,10 @@ export interface Requirement {
 }
 
 export interface CheckResult {
-  check_type: "contract_price_match" | "spend_cap" | "payee_match";
-  /** null for payee_match: a guard check, not a published Tanilo rule. */
+  check_type: "contract_price_match" | "spend_cap" | "payee_match" | "asset_match" | "network_match";
+  /** null for payee_match, asset_match and network_match: guard checks, not published Tanilo rules. */
   rule_id: string | null;
-  /** true for payee_match. Never sent to the API, never in a receipt. */
+  /** true for payee_match, asset_match and network_match. Never sent to the API, never in a receipt. */
   guard_check?: boolean;
   status: CheckStatus;
   reason: string | null;
@@ -68,7 +72,7 @@ export interface Decision {
   mode: "local" | "signed";
   at: string | null;
   /** The offer time used and where it came from, and which terms entry was used. */
-  inputs: { offered_at: string | null; offer_time_source: "now() option" | "system clock"; terms_entry?: { resource: string; match: "exact" | "prefix"; payTo: string | null } | null; terms_lookup?: string };
+  inputs: { offered_at: string | null; offer_time_source: "now() option" | "system clock"; terms_entry?: { resource: string; match: "exact" | "prefix"; payTo: string | null; asset: string | null; network: string | null } | null; terms_lookup?: string };
   requirement: Requirement | null;
   amount: { value: string; currency: string; decimals: number; atomic: string } | null;
   checks: CheckResult[];

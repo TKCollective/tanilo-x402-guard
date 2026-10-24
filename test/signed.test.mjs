@@ -27,7 +27,7 @@ test("verified: the signed receipt is passed to onDecision, and its signature ch
   assert.equal(d.receipt.jws.signatures.length, 1);
   const payload = Buffer.from(d.receipt.jws.payload, "base64url");
   assert.equal(d.receipt.canonical_sha256, `sha256-${crypto.createHash("sha256").update(payload).digest("hex")}`);
-  assert.ok(d.checks.every((c) => c.status === "verified" && c.signed === true));
+  assert.ok(d.checks.filter((c) => !c.guard_check).every((c) => c.status === "verified" && c.signed === true));   // the bindings are not_evaluated: the helper terms name no payTo/asset/network
   assert.match(d.checks[0].summary, /the offered price matches the supplied term under contract-price-match\/v0\.1 \(signed receipt\)/);
 });
 
@@ -75,13 +75,13 @@ for (const [name, behave] of Object.entries(FAILURES)) {
       const r = recorder();
       const out = await taniloGuard(signed(mockApi(behave), { onUnavailable: policy, timeoutMs: 50, ...r }))(ctx({ amount: "1000000" }));
       const d = r.decisions[0];
-      assert.ok(d.checks.every((c) => c.status === "unavailable"), JSON.stringify(d.checks.map((c) => c.status)));
+      assert.ok(d.checks.filter((c) => !c.guard_check).every((c) => c.status === "unavailable"), JSON.stringify(d.checks.map((c) => c.status)));
       assert.equal(d.receipt, null);
       if (policy === "block") {
         assert.equal(out.abort, true);
         assert.match(out.reason, /unavailable: .*no result is assumed/);
       } else assert.equal(out, undefined);
-      assert.deepEqual(d.policy.applied, [`unavailable: onUnavailable = ${policy}`]);
+      assert.deepEqual(d.policy.applied, [`unavailable: onUnavailable = ${policy}`, "not_evaluated: onNotEvaluated = allow"]);   // the second line: the bindings, unnamed in the helper terms
     }
   });
 }
@@ -107,7 +107,7 @@ test("a signed state that differs from the published rule on the same input is n
   const r = recorder();
   const out = await taniloGuard(signed(api, r))(ctx({ amount: "2000000" }));
   assert.equal(out.abort, true);
-  assert.ok(r.decisions[0].checks.every((c) => c.status === "unavailable" && c.reason === "service_differs_from_rule"));
+  assert.ok(r.decisions[0].checks.filter((c) => !c.guard_check).every((c) => c.status === "unavailable" && c.reason === "service_differs_from_rule"));
 });
 
 test("the unsigned wrapper is never read for the verdict", async () => {

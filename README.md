@@ -67,11 +67,14 @@ reaches the guard.
   set for that resource (default 1).
 - **Spend cap** (`spend-cap/v0.1`): whether the payment fits within the cap you supplied. For a cap per period,
   you supply `alreadySpent()`, which is called for every payment.
-- **Payment address** (`payee_match`, a guard check, not a published Tanilo rule): run only when your terms
-  entry names a `payTo`. It compares that address with the one the payment goes to (EVM addresses without
-  regard to letter case, other addresses exactly). A different address is contradicted, with both addresses
-  named, and stops the payment unless you set `onPayeeMismatch: "allow"`. It is never sent to the Tanilo API
-  and never appears in a receipt.
+- **Payment address, asset and network** (`payee_match`, `asset_match`, `network_match`: guard checks, not
+  published Tanilo rules): your terms entry may name the `payTo`, `asset` and `network` you agreed to. Each one
+  named is compared with the payment's (EVM addresses without regard to letter case, other addresses and the
+  network exactly). A different address, asset or network is contradicted, with both values named, and stops the
+  payment; for the address only, `onPayeeMismatch: "allow"` lets it through. One you do not name is
+  not_evaluated and follows `onNotEvaluated`, like a resource you gave no terms for. A price match alone does
+  not establish who is paid or in what: a seller can keep the amount and change the recipient. These checks are
+  never sent to the Tanilo API and never appear in a receipt.
 
 Each result names what it compared, for example "the offered price matches the supplied term under
 contract-price-match/v0.1". Results computed in local mode are labeled unsigned.
@@ -84,6 +87,8 @@ The rules read no clock, so the guard supplies it. The time used, and where it c
 
 - Whether your terms or your cap are authentic, complete or current. You supply them.
 - Who the seller is. `payee_match` only compares two addresses; it does not establish who controls either.
+  `asset_match` and `network_match` likewise compare identifiers you supplied; they do not establish what the
+  asset is worth or that the network is the one you think.
 - Whether anything will be delivered, or whether paying is a good idea.
 - It does not reserve funds or keep track of spending. Your system supplies `alreadySpent()` and must handle purchases made at the same time: two payments checked against the same remaining budget can both pass and together exceed it.
 
@@ -98,10 +103,10 @@ point) are indeterminate, never rounded.
 
 | Check state | Meaning | Default |
 | --- | --- | --- |
-| verified | the check matched what you supplied: the price term, the cap, or (payee_match) the payment address | doesn't allow the payment by itself; the other checks and policies still apply |
+| verified | the check matched what you supplied: the price term, the cap, or the payment address, asset or network | doesn't allow the payment by itself; the other checks and policies still apply |
 | contradicted | the check ran and the payment disagrees | always stops, except `payee_match`, which follows `onPayeeMismatch` (default block) |
 | indeterminate | the check could not compare (for example no term in effect, an unmapped asset) | `onIndeterminate: "block"` |
-| not_evaluated | you supplied no terms for this resource, or no cap | `onNotEvaluated: "allow"` |
+| not_evaluated | you supplied no terms for this resource, or no cap, or your terms entry names no `payTo`, `asset` or `network` | `onNotEvaluated: "allow"` |
 
 unavailable is a guard outcome in signed mode, not a check state: the Tanilo API gave no readable signed answer.
 Default `onUnavailable: "block"`.
@@ -183,8 +188,8 @@ Only `status == "valid"` means the receipt verified. An empty error list on its 
 `mode`, `terms`, `cap`, `assets`, `onIndeterminate`, `onNotEvaluated`, `onUnavailable`, `onPayeeMismatch`,
 `timeoutMs`, `baseUrl`, `jwks`, `agentId`, `fetch`, `now`, `onDecision`. Types are in `src/index.d.ts`. `terms`
 is a list of entries, each with `resource`, optional `match` (`"exact"` or `"prefix"`), the offer fields a
-payment does not carry (`seller`, `sku`, `unit`, optional `quantity`), optional `payTo`, and `terms` in the
-contract-price-match input shape.
+payment does not carry (`seller`, `sku`, `unit`, optional `quantity`), optional `payTo`, `asset` and `network`,
+and `terms` in the contract-price-match input shape.
 
 ## License
 

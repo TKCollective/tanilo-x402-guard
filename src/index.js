@@ -2,8 +2,9 @@
 // Copyright 2026 TK Collective LLC
 //
 // @tanilo/x402-guard: a before-payment guard for x402 clients. It checks the payment the client is about to
-// make against the customer's own supplied terms and cap, using Tanilo's published rules, and returns what
-// x402's onBeforePaymentCreation hook accepts: nothing (go ahead) or { abort: true, reason }.
+// make against the customer's own supplied terms and cap, using Tanilo's published rules, binds the payment's
+// recipient, asset and network to what the terms entry declares, and returns what x402's onBeforePaymentCreation
+// hook accepts: nothing (go ahead) or { abort: true, reason }.
 //
 // It does not establish that the terms or the cap are authentic or current, who the seller is, or that
 // anything will be delivered. It does not reserve funds or keep track of spending.
@@ -68,7 +69,9 @@ function readOptions(o) {
     const match = t.match ?? "exact";
     if (match !== "exact" && match !== "prefix") throw new ConfigError(`taniloGuard: terms[${i}].match must be "exact" or "prefix"; got ${JSON.stringify(t.match)}`);
     if (match === "prefix" && parsePrefix(t.resource) === null) throw new ConfigError(`taniloGuard: terms[${i}].resource must be an absolute http(s) URL with no query or fragment to be used as a prefix`);
-    if (t.payTo !== undefined && (typeof t.payTo !== "string" || t.payTo.length === 0)) throw new ConfigError(`taniloGuard: terms[${i}].payTo must be a non-empty string`);
+    for (const k of ["payTo", "asset", "network"]) {
+      if (t[k] !== undefined && (typeof t[k] !== "string" || t[k].length === 0)) throw new ConfigError(`taniloGuard: terms[${i}].${k} must be a non-empty string`);
+    }
     if (!Array.isArray(t.terms)) throw new ConfigError(`taniloGuard: terms[${i}].terms must be an array of contract terms in the contract-price-match input shape`);
   });
   const cap = o.cap ?? null;
@@ -170,8 +173,16 @@ function findTerms(entries, r) {
 }
 
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
-const samePayee = (a, b) => (EVM_ADDRESS.test(a) && EVM_ADDRESS.test(b) ? a.toLowerCase() === b.toLowerCase() : a === b);
+const isEvm = (a, b) => EVM_ADDRESS.test(a) && EVM_ADDRESS.test(b);
+const sameAddress = (a, b) => (isEvm(a, b) ? a.toLowerCase() === b.toLowerCase() : a === b);
 const GUARD_CHECK_LABEL = "a guard check, not a published Tanilo rule";
+
+// The payment fields a terms entry may bind, beyond the amount. Guard checks, not published Tanilo rules.
+const BINDINGS = [
+  { check_type: "payee_match", field: "payTo", key: "pay_to", differs: "payee_differs", same: sameAddress, the: (v) => `goes to ${v}`, noun: "address" },
+  { check_type: "asset_match", field: "asset", key: "asset", differs: "asset_differs", same: sameAddress, the: (v) => `is in ${v}`, noun: "asset" },
+  { check_type: "network_match", field: "network", key: "network", differs: "network_differs", same: (a, b) => a === b, the: (v) => `is on ${v}`, noun: "network" },
+];
 
 async function decide(cfg, context) {
   // The offer time: the rules read no clock, so the guard supplies one (the now() option, else the system clock).
@@ -211,21 +222,32 @@ async function decide(cfg, context) {
   const t = findTerms(cfg.terms, r);
   const entry = t.entries.length === 1 ? t.entries[0] : null;
   const toEvaluate = [];   // [{ check_type, input }]
-  inputs.terms_entry = entry ? { resource: entry.resource, match: entry.match ?? "exact", payTo: entry.payTo ?? null } : null;
+  inputs.terms_entry = entry ? { resource: entry.resource, match: entry.match ?? "exact", payTo: entry.payTo ?? null, asset: entry.asset ?? null, network: entry.network ?? null } : null;
   inputs.terms_lookup = t.entries.length === 0 ? "no entry" : t.entries.length > 1 ? `ambiguous (${t.entries.length} ${t.how} entries)` : t.how;
 
-  // payee_match: a guard check, not a published Tanilo rule. Run only when the matched entry names a payTo.
-  // Never sent to the API and never part of a receipt.
-  if (entry && typeof entry.payTo === "string") {
-    const same = samePayee(r.payTo, entry.payTo);
-    checks.push({
-      check_type: "payee_match", rule_id: null, guard_check: true, status: same ? "verified" : "contradicted",
-      reason: same ? null : "payee_differs",
-      input: { payment_pay_to: r.payTo, terms_pay_to: entry.payTo, comparison: EVM_ADDRESS.test(r.payTo) && EVM_ADDRESS.test(entry.payTo) ? "EVM address, case-insensitive" : "exact string" },
-      summary: same
-        ? `payee_match verified: the payment goes to ${r.payTo}, the address named with the supplied terms (${GUARD_CHECK_LABEL})`
-        : `payee_match contradicted: the payment goes to ${r.payTo}, but the supplied terms name ${entry.payTo} (${GUARD_CHECK_LABEL})`,
-    });
+  // payee_match, asset_match, network_match: the matched entry's payTo, asset and network against the payment's.
+  // Guard checks, not published Tanilo rules: never sent to the API and never part of a receipt. An expectation the
+  // entry does not declare is not_evaluated and follows onNotEvaluated, like a resource with no terms at all.
+  for (const b of BINDINGS) {
+    const base = { check_type: b.check_type, rule_id: null, guard_check: true };
+    const have = r[b.field], want = entry ? entry[b.field] : undefined;
+    if (t.entries.length === 0) {
+      checks.push({ ...base, status: "not_evaluated", reason: "no_terms_for_resource", summary: `${b.check_type} not evaluated: no supplied terms for ${r.url} (${GUARD_CHECK_LABEL})` });
+    } else if (t.entries.length > 1) {
+      checks.push({ ...base, status: "indeterminate", reason: "terms_entry_ambiguous", summary: `${b.check_type} indeterminate: ${t.entries.length} supplied terms entries match ${r.url} equally (${GUARD_CHECK_LABEL})` });
+    } else if (typeof want !== "string") {
+      checks.push({ ...base, status: "not_evaluated", reason: `no_${b.field}_in_terms`, summary: `${b.check_type} not evaluated: the supplied terms name no ${b.field} (${GUARD_CHECK_LABEL})` });
+    } else {
+      const same = b.same(have, want);
+      const comparison = b.field === "network" ? "exact string" : isEvm(have, want) ? "EVM address, case-insensitive" : "exact string";
+      checks.push({
+        ...base, status: same ? "verified" : "contradicted", reason: same ? null : b.differs,
+        input: { [`payment_${b.key}`]: have, [`terms_${b.key}`]: want, comparison },
+        summary: same
+          ? `${b.check_type} verified: the payment ${b.the(have)}, the ${b.noun} named with the supplied terms (${GUARD_CHECK_LABEL})`
+          : `${b.check_type} contradicted: the payment ${b.the(have)}, but the supplied terms name ${want} (${GUARD_CHECK_LABEL})`,
+      });
+    }
   }
 
   // contract_price_match
@@ -336,7 +358,7 @@ function summarize(ct, state, reason, ev, signed) {
 
 // ── policy ───────────────────────────────────────────────────────────────────────────────────────────────
 
-const ORDER = ["contract_price_match", "spend_cap", "payee_match"];
+const ORDER = ["contract_price_match", "spend_cap", "payee_match", "asset_match", "network_match"];
 
 function finish(cfg, { inputs, requirement, amount, checks: unordered, receipt }) {
   const checks = [...unordered].sort((a, b) => ORDER.indexOf(a.check_type) - ORDER.indexOf(b.check_type));
@@ -345,10 +367,16 @@ function finish(cfg, { inputs, requirement, amount, checks: unordered, receipt }
   const policy = { onIndeterminate: cfg.onIndeterminate, onNotEvaluated: cfg.onNotEvaluated, onUnavailable: cfg.onUnavailable, onPayeeMismatch: cfg.onPayeeMismatch, applied: [] };
   const blockers = [];
   if (of("contradicted").length) { policy.applied.push("contradicted: always abort"); blockers.push(...of("contradicted")); }
+  // Bindings: a contradicted payee follows onPayeeMismatch (as before); a contradicted asset or network always aborts.
   const payee = checks.find((c) => c.check_type === "payee_match" && c.status === "contradicted");
   if (payee) { policy.applied.push(`payee_match contradicted: onPayeeMismatch = ${cfg.onPayeeMismatch}`); if (cfg.onPayeeMismatch === "block") blockers.push(payee); }
+  for (const ct of ["asset_match", "network_match"]) {
+    const hit = checks.find((c) => c.check_type === ct && c.status === "contradicted");
+    if (hit) { policy.applied.push(`${ct} contradicted: always abort`); blockers.push(hit); }
+  }
+  // Other states: the published rules and the guard checks follow the same three policies.
   for (const [status, key] of [["unavailable", "onUnavailable"], ["indeterminate", "onIndeterminate"], ["not_evaluated", "onNotEvaluated"]]) {
-    const hit = of(status);
+    const hit = checks.filter((c) => c.status === status);
     if (!hit.length) continue;
     policy.applied.push(`${status}: ${key} = ${cfg[key]}`);
     if (cfg[key] === "block") blockers.push(...hit);

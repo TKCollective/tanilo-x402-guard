@@ -157,11 +157,13 @@ test("payee_match: onPayeeMismatch: allow lets the payment through and still rep
   assert.doesNotMatch(out2.reason, /payee_match/);
 });
 
-test("payee_match: not run when the terms entry names no payTo", async () => {
+test("payee_match: not_evaluated when the terms entry names no payTo; follows onNotEvaluated (default allow)", async () => {
   const r = recorder();
   assert.equal(await taniloGuard(base(r))(ctx({ amount: "1000000", payTo: "0x9999999999999999999999999999999999999999" })), undefined);
-  assert.equal(r.decisions[0].checks.find((c) => c.check_type === "payee_match"), undefined);
-  assert.deepEqual(r.decisions[0].checks.map((c) => c.check_type), ["contract_price_match", "spend_cap"]);
+  const p = r.decisions[0].checks.find((c) => c.check_type === "payee_match");
+  assert.equal(p.status, "not_evaluated");
+  assert.equal(p.reason, "no_payTo_in_terms");
+  assert.deepEqual(r.decisions[0].checks.map((c) => c.check_type), ["contract_price_match", "spend_cap", "payee_match", "asset_match", "network_match"]);
 });
 
 test("payee_match: non-EVM addresses are compared exactly", async () => {
