@@ -8,7 +8,7 @@ npm install @tanilo/x402-guard @x402/core @x402/fetch
 
 You also need the x402 payment scheme package for your network, for example `@x402/evm`.
 
-Status: early release (0.1.x). The rules are contract-price-match/v0.1 and spend-cap/v0.1.
+Status: early release (0.2.x). The rules are contract-price-match/v0.1 and spend-cap/v0.1.
 
 It plugs into x402's `onBeforePaymentCreation` hook. Supports x402 v2 only. The peer dependency range is
 `@x402/core >=2.19.0 <3`; the versions actually tested are 2.19.0 and 2.28.0, and the versions in between
@@ -38,6 +38,7 @@ client.onBeforePaymentCreation(taniloGuard({
   assets: { [NET]: { [USDC]: { currency: "USD", decimals: 6 } } },   // your choice: this maps USDC on Base to USD
   terms: [{
     resource: "https://seller.example/weather",
+    payTo: "0x1111111111111111111111111111111111111111", asset: USDC, network: NET,   // who you agreed to pay, in what, where
     seller: "seller.example", sku: "api.weather.v1", unit: "call",
     terms: [{ agreement_id: "MSA-2026-014", version: "1", seller: "seller.example",
               product_scope: { skus: ["api.weather.v1"] }, currency: "USD", unit: "call",
@@ -115,6 +116,16 @@ Why: a payment that could not be compared is stopped, because the guard cannot t
 wrong price. A resource you gave no terms for is allowed, because otherwise every unlisted purchase would stop.
 Set `onNotEvaluated: "block"` to stop the payment whenever a check is not evaluated, including when no terms entry matches or no cap is supplied. Every result is passed to `onDecision`, whatever
 the policy.
+
+## Upgrading from 0.1.x
+
+Add `payTo`, `asset` and `network` to each terms entry: without them the guard checks the price but not who is
+paid, in what, or on which network (0.1.x never compared asset or network, and compared the recipient only when
+`payTo` was named). The three binding checks are now reported as `not_evaluated` when the entry does not name
+the field; `payee_match` used to be absent in that case. Under the default `onNotEvaluated: "allow"` such
+payments are still allowed. Under `onNotEvaluated: "block"` they now stop until the entry names all three.
+`decision.checks` gained two entries (`asset_match`, `network_match`), so code that counts or iterates the
+checks should filter on `guard_check` or `check_type`.
 
 ## Finding your terms for a payment
 

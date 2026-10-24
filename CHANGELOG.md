@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-24)
 
 - A terms entry may now name the `asset` and `network` you agreed to, alongside `payTo`. New guard checks
   `asset_match` and `network_match` compare them with the payment's; a mismatch is contradicted and always stops
@@ -12,6 +12,12 @@
   the default `onNotEvaluated: "allow"` nothing changes for such payments; with `onNotEvaluated: "block"` a terms
   entry must now name all three, or those payments stop.
 - `decision.inputs.terms_entry` carries `asset` and `network` next to `payTo`.
+- Why: a price match alone does not establish who is paid, in what, or where. Found while replaying x402 issue
+  #3866 (an inflated 402 amount) against the guard: in 0.1.x a payment at the agreed price but to another
+  recipient (entry without `payTo`), in another mapped asset, or on another mapped network was allowed.
+- Tests: 79 (12 new in `test/terms-binding.test.mjs`, 11 of which failed on 0.1.1), plus the compatibility runs
+  inside @x402/core 2.19.0 and 2.28.0. The published rules, their copied code and the vectors are unchanged.
+  Signed mode was not re-tested against the live API for this release; the bindings never reach it.
 
 ## 0.1.1 (2026-10-15)
 

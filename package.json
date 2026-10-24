@@ -1,6 +1,6 @@
 {
   "name": "@tanilo/x402-guard",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A before-payment guard for x402 clients: checks the payment an agent is about to make against the customer's own supplied terms and cap, with Tanilo's published rules.",
   "type": "module",
   "main": "./src/index.js",
